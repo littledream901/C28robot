@@ -16,7 +16,7 @@ BASE_URL = "http://admin.pikaqiu.cfd/api/psndoc/listReport"
 # --- API 请求 Body 参数 ---
 PAYLOAD_TEMPLATE = {
     "sortOrder": "asc",  
-    "pageSize": 200,      # 注意：如果 API 实际支持的 pageSize 较小，这里可能需要改回 50
+    "pageSize": 200,      
     "pageNumber": 1,
     "id": "c6d22d9cef1498bb9885bd7e20ff502b", # 目标用户ID
     "moneyType": "",     
@@ -27,18 +27,24 @@ PAYLOAD_TEMPLATE = {
 HEADERS = {
     "accept": "application/json, text/javascript, */*; q=0.01",
     "accept-language": "zh-CN,zh;q=0.9",
-    # !! 请在此处替换为新的、有效的授权令牌 !!
     "authorization": "Bearerer;eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJMb3R0ZXJ5IiwiaWF0IjoxNzY0MTM3MjIxLCJ1c2VySWQiOiJyb29tMTUyNzMiLCJhY2NvdW50TmFtZSI6InBpa2FxaXUiLCJ1c2VyTmFtZSI6IuaTjeS9nOWRmCIsInJvb21Db2RlIjoiMTAwMDEiLCJyb29tTmFtZSI6IuearuWNoeS4mCIsImV4cGlyZVRpbWUiOiIyMDI1MTIwNTIyMTgwNiIsImNyZWF0ZVRpbWUiOiIyMDIwMDYyNTIyMjQwMyIsInN0YXR1cyI6IiIsImtleSI6InJvb20xNTI3My1wYyIsInBhc3N3b3JkIjoiREVEOEM2OUMyN0QzOUUyMDI3MzYxQUY2MTJERUU0OUJFNzhCRTdCMCIsIm51bSI6MCwiZXhwIjoxNzY0OTQ0Mjg2fQ.CIzUY2djVUlnPS0Ahf_scVFhcq-dvDVa21PyDZOOodE",
     "content-type": "application/json",
     "x-requested-with": "XMLHttpRequest",
 }
 
+# --- 核心交易类型定义 (请确保与您系统一致) ---
+WAGERING_TYPES = {'下注'}         
+CANCELLATION_TYPES = {'取消下注'} 
+WINNINGS_TYPES = {'中奖加分', '回水加分', '佣金加分'} 
+CORE_TYPES = WAGERING_TYPES | CANCELLATION_TYPES | WINNINGS_TYPES
+
+
 # ====================================================================
-# B. 数据获取函数
+# B. 数据获取函数 (保持不变)
 # ====================================================================
 
 def fetch_all_transaction_records(base_url, payload_template, headers):
-    """自动循环获取所有页面的交易记录，同时传递 URL GET 参数和 POST Body 数据。"""
+    """自动循环获取所有页面的交易记录。"""
     all_records = []
     current_page = 1
     total_pages = 1
@@ -130,10 +136,7 @@ def transaction_metrics_analysis(sorted_data, category_totals):
     """
     print("\n--- 5. 交易指标 (高级指标分析) ---")
     
-    WAGERING_TYPES = {'下注'}         
-    CANCELLATION_TYPES = {'取消下注'} 
-    WINNINGS_TYPES = {'中奖加分', '回水加分', '佣金加分'} 
-    
+    # 使用全局定义的类型集合
     metrics = defaultdict(float)
     
     metrics['Total_Wagered'] = 0.0
@@ -172,54 +175,69 @@ def transaction_metrics_analysis(sorted_data, category_totals):
 
 
 # ====================================================================
-# E. 新增：交易日期维度分析函数
+# E. 交易日期维度分析函数 (最终修改：包含所有交易类型)
 # ====================================================================
 
-def time_series_analysis(sorted_data):
+def time_series_analysis(sorted_data, all_transaction_types):
     """
-    按日期计算关键交易指标 (净投注额, 净盈亏, 笔数)。
+    按日期计算核心指标，并列出所有非核心游戏类型的每日总额。
     """
     print("\n--- 6. 交易日期维度分析 ---")
     
-    # 定义用于计算核心盈亏指标的类别 (与 D 部分保持一致)
-    WAGERING_TYPES = {'下注'}         
-    CANCELLATION_TYPES = {'取消下注'} 
-    WINNINGS_TYPES = {'中奖加分', '回水加分', '佣金加分'} 
-    
     daily_metrics = defaultdict(lambda: defaultdict(float))
 
+    # 找出除了核心游戏指标之外的所有交易类型
+    other_types_list = sorted(list(all_transaction_types - CORE_TYPES))
+    
+    # ------------------ 1. 数据聚合 ------------------
     for record in sorted_data:
         try:
-            # 使用全局定义的 DATE_FORMAT
             dt = datetime.strptime(record['create_time'], DATE_FORMAT)
         except (ValueError, KeyError):
             continue 
 
-        # 核心：只使用日期作为键 (YYYY-MM-DD)
         date_key = dt.strftime("%Y-%m-%d")
-        
         balance = record['balance']
         dict_name = record['dict_name']
         
         # 统计每日的笔数
         daily_metrics[date_key]['Count'] += 1
         
-        # 统计投注、取消、派彩
+        # 统计核心游戏指标
         if dict_name in WAGERING_TYPES:
             daily_metrics[date_key]['Gross_Wagered'] += abs(balance)
         elif dict_name in CANCELLATION_TYPES:
             daily_metrics[date_key]['Cancelled_Wagered'] += abs(balance)
         elif dict_name in WINNINGS_TYPES:
             daily_metrics[date_key]['Paid_Out'] += balance
-            
+        
+        # 统计其他所有交易类型 (使用其名称作为键)
+        if dict_name not in CORE_TYPES:
+            daily_metrics[date_key][dict_name] += balance
+
     
-    # --- 每日指标报告 ---
-    print("\n📅 每日核心指标统计：")
-    print("-" * 75)
-    print(f"{'日期':<12} | {'笔数':<6} | {'净投注额':>12} | {'总派彩额':>12} | {'净盈亏(PnL)':>12}")
-    print("-" * 75)
+    # ------------------ 2. 报告输出 ------------------
+    print("\n📅 每日核心指标统计 (包含所有其他交易类型)：")
     
-    # 按日期升序打印结果
+    # 动态构建表头
+    column_width = 12
+    date_width = 10
+    count_width = 6
+    
+    header_core = (
+        f"{'日期':<{date_width}} | {'笔数':<{count_width}} | "
+        f"{'净投注额':>{column_width}} | {'总派彩额':>{column_width}} | {'净盈亏(PnL)':>{column_width}}"
+    )
+    
+    header_other = ""
+    for t in other_types_list:
+        header_other += f" | {t:>{column_width}}"
+        
+    print("-" * (len(header_core) + len(header_other) + 3)) 
+    print(header_core + header_other)
+    print("-" * (len(header_core) + len(header_other) + 3))
+    
+    # 打印数据行
     for date_key in sorted(daily_metrics.keys()):
         m = daily_metrics[date_key]
         
@@ -230,13 +248,23 @@ def time_series_analysis(sorted_data):
         net_wagered = round(gross_wagered - cancelled_wagered, 2)
         net_pnl = round(paid_out - net_wagered, 2)
         
-        print(f"{date_key:<12} | {int(m['Count']):<6} | {net_wagered:>12.2f} | {paid_out:>12.2f} | {net_pnl:>12.2f}")
+        # 核心数据列
+        row_str = (
+            f"{date_key:<{date_width}} | {int(m['Count']):<{count_width}} | "
+            f"{net_wagered:>{column_width}.2f} | {paid_out:>{column_width}.2f} | {net_pnl:>{column_width}.2f}"
+        )
         
-    print("-" * 75)
+        # 其他交易类型数据列
+        for t in other_types_list:
+            row_str += f" | {m[t]:>{column_width}.2f}"
+
+        print(row_str)
+        
+    print("-" * (len(header_core) + len(header_other) + 3))
 
 
 # ====================================================================
-# F. 数据分析与一致性检查函数 (修改 C 部分，加入步骤 6)
+# F. 数据分析与一致性检查函数 (修改 C 部分，传递所有交易类型)
 # ====================================================================
 
 def analyze_and_check_consistency_full(data_list):
@@ -306,16 +334,18 @@ def analyze_and_check_consistency_full(data_list):
         return False
     print("✅ **一致性检查通过**: 所有交易记录的余额字段都前后衔接。")
 
-    # 3. 交易类型 (dict_name) 检测和汇总
+    # 3. 交易类型 (dict_name) 检测和汇总 (用于生成步骤 3和5，并提取所有类型名称)
     print("\n--- 3. 交易类型及金额汇总 ---")
     category_totals = defaultdict(float)
     category_counts = defaultdict(int)
+    all_transaction_types = set()
     
     for record in sorted_data:
         dict_name = record['dict_name']
         balance = record['balance']
         category_totals[dict_name] = round(category_totals[dict_name] + balance, 2)
         category_counts[dict_name] += 1
+        all_transaction_types.add(dict_name) # 收集所有类型名称
         
     print("📋 **发现的交易类型 (Dict Name) 列表及统计：**")
     print("-" * 40)
@@ -348,8 +378,8 @@ def analyze_and_check_consistency_full(data_list):
     # 5. 调用交易指标分析
     transaction_metrics_analysis(sorted_data, category_totals)
 
-    # 6. 新增：调用日期维度分析
-    time_series_analysis(sorted_data)
+    # 6. 新增：调用日期维度分析，并传递所有交易类型名称
+    time_series_analysis(sorted_data, all_transaction_types)
 
     return True
 
